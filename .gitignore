@@ -1,0 +1,13 @@
+# Ne jamais push le fichier .env (contient ton token Discord !)
+.env
+
+# Fichiers Python inutiles
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environnements virtuels
+venv/
+.venv/
+env/
