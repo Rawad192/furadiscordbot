@@ -11,3 +11,6 @@ __pycache__/
 venv/
 .venv/
 env/
+
+# Script de push local
+push.bat
