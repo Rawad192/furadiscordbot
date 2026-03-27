@@ -9,14 +9,14 @@ from datetime import datetime, timedelta
 # ============================================================
 
 AMIS_IDS = [
-    111111111111111111,  # Pseudo Ami 1 — remplace par le vrai ID
-    222222222222222222,  # Pseudo Ami 2
-    333333333333333333,  # Pseudo Ami 3
-    444444444444444444,  # Pseudo Ami 4
-    555555555555555555,  # Pseudo Ami 5
-    666666666666666666,  # Pseudo Ami 6
-    777777777777777777,  # Pseudo Ami 7
-    888888888888888888,  # Pseudo Ami 8
+    1438260672587628564,  #Mathys Pseudo Ami 1 — remplace par le vrai ID
+    1398380814596571308,  #Thildy Pseudo Ami 2
+    1416787967661445274,  #ettienz Pseudo Ami 3
+    1301568459703976039,  #dallil Pseudo Ami 4
+    1063850610761404486,  #romain Pseudo Ami 5
+    1376953372338290901,  #Jallel Pseudo Ami 6
+    1345854728675786833,  #thuyai Pseudo Ami 7
+    #888888888888888888,  # Pseudo Ami 8
 ]
 
 # Délai minimum (en minutes) entre deux notifications pour le même ami
