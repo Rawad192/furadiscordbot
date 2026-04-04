@@ -1,7 +1,7 @@
 import discord
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ============================================================
 #  CONFIGURATION — remplace les IDs de tes amis uniquement
@@ -9,19 +9,15 @@ from datetime import datetime, timedelta
 # ============================================================
 
 AMIS_IDS = [
-    1438260672587628564,  #Mathys Pseudo Ami 1 — remplace par le vrai ID
-    1398380814596571308,  #Thildy Pseudo Ami 2
-    1416787967661445274,  #ettienz Pseudo Ami 3
-    1301568459703976039,  #dallil Pseudo Ami 4
-    1063850610761404486,  #romain Pseudo Ami 5
-    1376953372338290901,  #Jallel Pseudo Ami 6
-    1345854728675786833,  #thuyai Pseudo Ami 7
-    #888888888888888888,  # Pseudo Ami 8
+    1438260672587628564,  # Mathys  — Ami 1
+    1398380814596571308,  # Thildy  — Ami 2
+    1416787967661445274,  # ettienz — Ami 3
+    1301568459703976039,  # dallil  — Ami 4
+    1063850610761404486,  # romain  — Ami 5
+    1376953372338290901,  # Jallel  — Ami 6
+    1345854728675786833,  # thuyai  — Ami 7
+    #888888888888888888, # Ami 8
 ]
-
-# Délai minimum (en minutes) entre deux notifications pour le même ami
-# Evite le spam si quelqu'un rejoint/quitte/rejoint rapidement
-COOLDOWN_MINUTES = 5
 
 # ============================================================
 
@@ -48,8 +44,11 @@ if not TON_USER_ID_STR or not TON_USER_ID_STR.isdigit():
 
 TON_USER_ID = int(TON_USER_ID_STR)
 
-# Stocke l'heure de la dernière notification par ami (anti-spam)
-derniere_notif: dict[int, datetime] = {}
+# Stocke les données du message envoyé pour chaque ami :
+#   member_id → {"message": discord.Message, "content": str}
+# Permet d'éditer le message pour signaler la déconnexion avec 🔴
+# NOTE : dict[int, dict] compatible Python 3.8+
+messages_notif = {}  # type: dict
 
 # Intents nécessaires
 intents = discord.Intents.default()
@@ -66,36 +65,61 @@ async def on_ready():
 
 
 @client.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+async def on_voice_state_update(member, before, after):
     # Ignore si ce n'est pas un ami surveillé
     if member.id not in AMIS_IDS:
         return
 
-    # Ignore les changements de salon et les déconnexions — on veut uniquement les entrées
-    if before.channel is not None or after.channel is None:
+    # ── CAS 1 : Déconnexion totale du vocal ──────────────────────────────────
+    # before.channel = salon quitté, after.channel = None (complètement déco)
+    if before.channel is not None and after.channel is None:
+        if member.id in messages_notif:
+            stored = messages_notif[member.id]
+            msg = stored["message"]
+            original_content = stored["content"]
+            heure_depart = datetime.now().strftime("%H:%M:%S")
+
+            # ⚠️ Les bots ne peuvent PAS ajouter de réactions dans les DMs (API Discord).
+            # On édite le message d'origine pour y ajouter une ligne de départ avec 🔴.
+            new_content = f"{original_content}\n🔴 **A quitté le vocal** à **{heure_depart}**"
+            try:
+                await msg.edit(content=new_content)
+                log.info(f"🔴 {member.display_name} a quitté le vocal — message mis à jour")
+            except discord.NotFound:
+                log.warning(f"⚠️ Message introuvable pour {member.display_name} (supprimé ?)")
+            except discord.Forbidden:
+                log.error("❌ Impossible de modifier le message — permissions insuffisantes")
+            except discord.HTTPException as e:
+                log.error(f"❌ Erreur HTTP lors de la modification du message : {e}")
+            finally:
+                # Nettoyage dans tous les cas pour éviter une référence obsolète
+                del messages_notif[member.id]
+        else:
+            log.info(f"ℹ️ {member.display_name} a quitté le vocal (aucun message stocké — bot redémarré ?)")
         return
 
+    # ── CAS 2 : Changement de salon (avant → après, sans déco) → ignoré ─────
+    # before.channel is not None ET after.channel is not None
+    if before.channel is not None:
+        return
+
+    # ── CAS 3 : Entrée dans un salon vocal (depuis aucun salon) ──────────────
+    # before.channel = None, after.channel = salon rejoint
+    if after.channel is None:
+        return  # sécurité (ne devrait pas arriver)
+
     maintenant = datetime.now()
-
-    # Anti-spam : vérifie le cooldown pour cet ami
-    if member.id in derniere_notif:
-        temps_ecoule = maintenant - derniere_notif[member.id]
-        if temps_ecoule < timedelta(minutes=COOLDOWN_MINUTES):
-            restant = COOLDOWN_MINUTES - int(temps_ecoule.total_seconds() / 60)
-            log.info(f"⏳ Cooldown actif pour {member.display_name} (encore ~{restant} min)")
-            return
-
-    # Met à jour le timestamp de dernière notification
-    derniere_notif[member.id] = maintenant
-
     salon_name = after.channel.name
-    server_name = after.channel.guild.name
+
+    # Sécurité : guild peut être None dans certains edge cases
+    guild = getattr(after.channel, "guild", None)
+    server_name = guild.name if guild else "Serveur inconnu"
+
     heure = maintenant.strftime("%H:%M:%S")
 
     log.info(f"🎙️ {member.display_name} a rejoint #{salon_name} sur {server_name}")
 
     # Récupère l'utilisateur depuis le cache Discord d'abord (pas d'appel API inutile)
-    # Si pas en cache, on fait l'appel API
     toi = client.get_user(TON_USER_ID)
     if toi is None:
         try:
@@ -107,14 +131,22 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             log.error(f"❌ Erreur lors de la récupération de ton compte : {e}")
             return
 
-    # Envoi du DM avec gestion d'erreur
+    # Construction du contenu du message (stocké pour pouvoir l'éditer plus tard)
+    contenu = (
+        f"🎙️ **{member.display_name}** vient de rejoindre le vocal **{salon_name}**\n"
+        f"📡 Serveur : **{server_name}**\n"
+        f"🕐 {heure}"
+    )
+
+    # Envoi du DM avec gestion d'erreur — on stocke le message pour l'édition future
     try:
-        await toi.send(
-            f"🎙️ **{member.display_name}** vient de rejoindre le vocal **{salon_name}**\n"
-            f"📡 Serveur : **{server_name}**\n"
-            f"🕐 {heure}"
-        )
-        log.info("✅ Notification envoyée avec succès")
+        message = await toi.send(contenu)
+        # Stocke le message ET son contenu original pour reconstruire le texte édité
+        messages_notif[member.id] = {
+            "message": message,
+            "content": contenu,
+        }
+        log.info("✅ Notification envoyée et message stocké pour la mise à jour future")
     except discord.Forbidden:
         log.error("❌ Impossible d'envoyer un DM — vérifie que tes DMs sont ouverts (Paramètres → Confidentialité)")
     except discord.HTTPException as e:
